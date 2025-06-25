@@ -1,69 +1,53 @@
-import time
-
 import cv2
+import numpy as np
 
+marker_image = cv2.imread("variant-10.jpg", cv2.IMREAD_GRAYSCALE)
+_, marker_binary = cv2.threshold(marker_image, 150, 255, cv2.THRESH_BINARY)
 
-def image_processing():
-    img = cv2.imread('img_test.jpg')
-    #cv2.imshow('image', img)
-    w, h = img.shape[:2]
-    #(cX, cY) = (w // 2, h // 2)
-    #M = cv2.getRotationMatrix2D((cX, cY), 45, 1.0)
-    #rotated = cv2.warpAffine(img, M, (w, h))
-    #cv2.imshow('rotated', rotated)
+orb = cv2.ORB_create()
 
-    #cat = img[250:580, 20:280]
-    #cv2.imshow('image', cat)
+kp_marker, des_marker = orb.detectAndCompute(marker_binary, None)
 
-    #r = cv2.selectROI(img)
-    #image_cropped = img[int(r[1]):int(r[1] + r[3]), int(r[0]):int(r[0] + r[2])]
-    #cv2.imshow('cropped', image_cropped)
+cap = cv2.VideoCapture(0)
 
-    cv2.line(img, (0, 0), (580, 600), (255, 0, 0), 5)
-    cv2.rectangle(img, (384, 10), (580, 128), (0, 252, 0), 3)
-    cv2.putText(img, 'Lab. No 8', (10, 500), cv2.FONT_HERSHEY_SIMPLEX, 3,
-                (0, 0, 255), 2, cv2.LINE_AA)
-    cv2.imshow('img', img)
+flip_frame = False
 
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
 
-def video_processing():
-    cap = cv2.VideoCapture(1)
-    down_points = (640, 480)
-    i = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    _, binary_frame = cv2.threshold(gray_frame, 150, 255, cv2.THRESH_BINARY)
 
-        frame = cv2.resize(frame, down_points, interpolation=cv2.INTER_LINEAR)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (21, 21), 0)
-        ret, thresh = cv2.threshold(gray, 110, 255, cv2.THRESH_BINARY_INV)
+    kp_frame, des_frame = orb.detectAndCompute(binary_frame, None)
 
-        contours, hierarchy = cv2.findContours(thresh,
-                            cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        if len(contours) > 0:
-            c = max(contours, key=cv2.contourArea)
-            x, y, w, h = cv2.boundingRect(c)
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            if i % 5 == 0:
-                a = x + (w // 2)
-                b = y + (h // 2)
-                print(a, b)
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    matches = bf.match(des_marker, des_frame) if des_frame is not None else []
 
-        cv2.imshow('frame', frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+    if len(matches) > 10:
+        src_pts = np.float32([kp_marker[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp_frame[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
+        
+        marker_center = np.mean(dst_pts, axis=0)[0]
 
-        time.sleep(0.1)
-        i += 1
+        h, w = frame.shape[:2]
+        center_square = (w//2 - 75, h//2 - 75, w//2 + 75, h//2 + 75)
 
-    cap.release()
+        if (center_square[0] < marker_center[0] < center_square[2] and
+            center_square[1] < marker_center[1] < center_square[3]):
+            flip_frame = not flip_frame
 
+    if flip_frame:
+        frame = cv2.flip(frame, 1)
 
-if __name__ == '__main__':
-    #image_processing()
-    video_processing()
+    cv2.rectangle(frame, (center_square[0], center_square[1]), 
+                  (center_square[2], center_square[3]), (0, 255, 0), 2)
 
-cv2.waitKey(0)
+    cv2.imshow("Marker Tracking", frame)
+
+    if cv2.waitKey(1) == 27:
+        break
+
+cap.release()
 cv2.destroyAllWindows()
